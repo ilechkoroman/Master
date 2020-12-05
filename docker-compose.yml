@@ -1,0 +1,34 @@
+version: '3'
+services:
+  app:
+    image: master
+    build: .
+    ports:
+      - 5000:5000
+    restart: always
+    networks:
+      - redis-net
+    links:
+      - redis
+    depends_on:
+      - redis
+    volumes:
+      - ./data:/datasets
+
+  redis:
+    image: redis:5.0-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    hostname: redis
+    networks:
+      - redis-net
+    volumes:
+      - redis-data:/data
+
+
+networks:
+  redis-net:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
