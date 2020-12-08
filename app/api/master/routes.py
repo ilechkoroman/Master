@@ -23,22 +23,30 @@ class POST(Resource):
         logger.info('Parsing post data')
         post_data = request.get_json(force=True, silent=True) or {}
         data = post_data.get('data')
+        concern_count = post_data.get('write_concern', 1)
 
-        task_fst_response = replicate_task.apply((data, general_config.first_hosts, 'append'))
-
-        if task_fst_response.result['status'] != 'success':
-            return task_fst_response.result
-        logger.info('First instance replicated')
-
-        task_scnd_response = replicate_task.apply((data, general_config.second_hosts, 'append'))
-        if task_scnd_response.result['status'] != 'success':
-           return task_scnd_response.result
-        logger.info('Second instance replicated')
+        task_fst_response = replicate_task.apply_async((data, general_config.first_hosts, 'append'))
+        task_scnd_response = replicate_task.apply_async((data, general_config.second_hosts, 'append'))
 
         logger.info('Adding to memory list in master')
         INMEMORY_LIST.append(data)
+        self.monitoring([task_fst_response, task_scnd_response], concern_count)
+        logger.info(f'{concern_count - 1} instance(s) replicated')
 
         return {'status': 'success'}
+
+    def monitoring(self, tasks, concern_count):
+        concern_reached = 1
+        while concern_reached != concern_count:
+            for task in tasks:
+                task_response = replicate_task.AsyncResult(task.id)
+                logger.info(f'Current status {task_response.status}')
+                if task_response.status == 'SUCCESS':
+                    concern_reached = concern_reached + 1
+                    logger.info(f'Task with id {task.id} finished')
+                elif task_response.status == 'FAILURE':
+                    logger.info(task_response.traceback)
+                    return
 
 
 @api.header('Content-Type', 'application/json')

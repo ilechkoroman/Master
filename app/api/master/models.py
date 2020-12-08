@@ -2,7 +2,8 @@ from flask_restplus import fields
 from app.api.namespaces import master as api
 
 request_append_model = api.model('requestModelAppend', {
-    'data': fields.String(description='The data which we append', required=True)
+    'data': fields.String(description='The data which we append', required=True),
+    'write_concern': fields.Integer(description='Minimum count of instances where data should be saved')
 })
 
 response_apppend_model = api.model('responseModelAppend', {
