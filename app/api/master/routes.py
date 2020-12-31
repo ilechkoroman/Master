@@ -3,12 +3,12 @@ from flask import request
 
 from app.api.decorators import post_response, get_response, delete_response
 from app.celery.replicate import replicate_task
-from app.api.master.models import api, request_append_model, response_apppend_model, response_get_model, \
-    delete_response_model
+from app.api.master.models import api, request_append_model, response_apppend_model, response_get_model
 
 from logger_tools import setup_logger
 from general_config import general_config
-INMEMORY_LIST = list()
+INMEMORY_LIST = dict()
+READ_ONLY = False
 
 logger = setup_logger("Master")
 
@@ -20,31 +20,47 @@ class POST(Resource):
     @post_response
     def post(self):
         global INMEMORY_LIST
+        global READ_ONLY
         logger.info('Parsing post data')
         post_data = request.get_json(force=True, silent=True) or {}
         data = post_data.get('data')
         concern_count = post_data.get('write_concern', 1)
 
-        task_fst_response = replicate_task.apply_async((data, general_config.first_hosts, 'append'))
-        task_scnd_response = replicate_task.apply_async((data, general_config.second_hosts, 'append'))
+        if not READ_ONLY:
+            task_fst_response = replicate_task.apply_async((data, general_config.first_hosts, INMEMORY_LIST))
+            task_scnd_response = replicate_task.apply_async((data, general_config.second_hosts, INMEMORY_LIST))
 
-        logger.info('Adding to memory list in master')
-        INMEMORY_LIST.append(data)
-        self.monitoring([task_fst_response, task_scnd_response], concern_count)
-        logger.info(f'{concern_count - 1} instance(s) replicated')
+            logger.info('Adding to memory list in master')
+            key = f'{task_fst_response.id}:{len(list(INMEMORY_LIST.values()))}'
+            INMEMORY_LIST[key] = data
+            self.monitoring([task_fst_response, task_scnd_response], concern_count)
+            logger.info(f'{concern_count - 1} instance(s) replicated')
 
-        return {'status': 'success'}
+            return {'status': 'success'}
+        return {'status': 'fail', 'message': 'No one from secondaries are available read only mode'}
 
     def monitoring(self, tasks, concern_count):
         concern_reached = 1
-        while concern_reached != concern_count:
+        global READ_ONLY
+
+        while concern_reached < concern_count:
+            unresponse_instances = 0
             for task in tasks:
                 task_response = replicate_task.AsyncResult(task.id)
-                logger.info(f'Current status {task_response.status}')
-                if task_response.status == 'SUCCESS':
+
+                if task_response:
+                    status = task_response.state
+                    health = task_response.info['health'] if task_response.info else 'undefined'
+
+                if health == 'UNHEALTHY':
+                    unresponse_instances += 1
+                if unresponse_instances == 2:
+                    logger.info(f'{unresponse_instances} INSTANCES DO NOT RESPONSE, SWAPPED TO READ_ONLY MODE')
+                    READ_ONLY = True
+                if status == 'SUCCESS':
                     concern_reached = concern_reached + 1
                     logger.info(f'Task with id {task.id} finished')
-                elif task_response.status == 'FAILURE':
+                elif status == 'FAILURE':
                     logger.info(task_response.traceback)
                     return
 
@@ -54,30 +70,4 @@ class GET(Resource):
     @api.response(200, 'Success', response_get_model)
     @get_response
     def get(self):
-        return {'status': 'success', 'data': INMEMORY_LIST}
-
-
-@api.header('Content-Type', 'application/json')
-class Delete(Resource):
-    @api.response(200, 'Success', delete_response_model)
-    @delete_response
-    def delete(self):
-        global INMEMORY_LIST
-        if not len(INMEMORY_LIST):
-            logger.info('Instance not replicated')
-            return {"status": "fail", "message":  f"List is empty"}
-
-        task_fst_response = replicate_task.apply((None, general_config.first_hosts, 'delete'))
-        if task_fst_response.result['status'] != 'success':
-            logger.info('First instance not replicated')
-            return task_fst_response
-        logger.info('First instance replicated')
-
-        task_scnd_response = replicate_task.apply((None, general_config.second_hosts, 'delete'))
-        if task_scnd_response.result['status'] != 'success':
-           logger.info('Second instance not replicated')
-           return task_scnd_response
-        logger.info('Second instance replicated')
-
-        INMEMORY_LIST.pop(-1)
-        return {"status": "success"}
+        return {'status': 'success', 'data': list(INMEMORY_LIST.values())}

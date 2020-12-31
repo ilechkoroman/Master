@@ -10,6 +10,5 @@ api_v1 = Api(api_v1_bp)
 
 master_ns.add_resource(master.GET, '/get')
 master_ns.add_resource(master.POST, '/post')
-master_ns.add_resource(master.Delete, '/delete')
 
 api_v1.add_namespace(master_ns, '/master')

@@ -10,10 +10,6 @@ response_apppend_model = api.model('responseModelAppend', {
     'status':  fields.String()
 })
 
-delete_response_model = api.model('responseModelDelete', {
-    'status':  fields.String()
-})
-
 
 response_get_model = api.model('responseModelGet', {
     'status':  fields.String(),
